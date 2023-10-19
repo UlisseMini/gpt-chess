@@ -1,0 +1,4 @@
+berserk
+python-chess
+openai
+python-dotenv
