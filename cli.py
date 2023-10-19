@@ -6,6 +6,7 @@ import time
 import random
 from threading import Thread
 from dotenv import load_dotenv; load_dotenv()
+from berserk.exceptions import ResponseError
 import os
 
 
@@ -42,60 +43,65 @@ def play_game(client, init_event):
     prompt_header = PROMPT_HEADER.format(result='1-0' if our_color==chess.WHITE else '0-1')
 
     for event in client.bots.stream_game_state(game['id']):
-        if event['type'] == 'chatLine':
-            print(event)
-            continue
-        elif event['type'] == 'opponentGone':
-            print('not handling opponentGone')
-            continue
+        try:
+            if event['type'] == 'chatLine':
+                print(event)
+                continue
+            elif event['type'] == 'opponentGone':
+                print('not handling opponentGone')
+                continue
 
-        game_state = event['state'] if event['type'] == 'gameFull' else event
+            game_state = event['state'] if event['type'] == 'gameFull' else event
 
-        print('game event', event)
+            print('game event', event)
 
-        prompt = prompt_header
+            prompt = prompt_header
 
-        # set board position and prompt
-        board = chess.Board()
-        print(board)
-        moves = [x for x in game_state['moves'].split(' ') if x]
-        for i, move in enumerate(moves):
-            # convert move from uci to san
-            move_san = board.san(chess.Move.from_uci(move))
-            board.push_uci(move)
-            prompt += f'{i//2+1}. {move_san}' if i % 2 == 0 else f' {move_san}\n'
+            # set board position and prompt
+            board = chess.Board()
+            print(board)
+            moves = [x for x in game_state['moves'].split(' ') if x]
+            for i, move in enumerate(moves):
+                # convert move from uci to san
+                move_san = board.san(chess.Move.from_uci(move))
+                board.push_uci(move)
+                prompt += f'{i//2+1}. {move_san}' if i % 2 == 0 else f' {move_san}\n'
 
-        if board.is_game_over():
-            print('game over, result:', board.result())
-            break
+            if board.is_game_over():
+                print('game over, result:', board.result())
+                break
 
-        # move if our turn
-        if board.turn == our_color:
-            print('PROMPT:\n' + prompt)
-            move = ""
-            while not legal_move(board, move):
-                completion = openai.Completion.create(
-                    engine="gpt-3.5-turbo-instruct",
-                    prompt=prompt,
-                    temperature=0.5,
-                    max_tokens=6,
-                )
-                text = completion['choices'][0]['text'].strip() # type:ignore
-                print('text', text)
+            # move if our turn
+            if board.turn == our_color:
+                print('PROMPT:\n' + prompt)
+                move = ""
+                while not legal_move(board, move):
+                    completion = openai.Completion.create(
+                        engine="gpt-3.5-turbo-instruct",
+                        prompt=prompt,
+                        temperature=0.5,
+                        max_tokens=6,
+                    )
+                    text = completion['choices'][0]['text'].strip() # type:ignore
+                    print('text', text)
 
-                # match uci move with regex
-                san_regex = re.compile(r"([KQBNR]?[a-h]?[1-8]?x?[a-h][1-8](?:=[KQBNR])?|O-O(?:-O)?|[a-h]x[a-h])(\+{1,2}|#)?")
-                match = san_regex.search(text)
-                print('match', match)
-                if match:
-                    move = match.group(0)
-                    print('move', move)
+                    # match uci move with regex
+                    san_regex = re.compile(r"([KQBNR]?[a-h]?[1-8]?x?[a-h][1-8](?:=[KQBNR])?|O-O(?:-O)?|[a-h]x[a-h])(\+{1,2}|#)?")
+                    match = san_regex.search(text)
+                    print('match', match)
+                    if match:
+                        move = match.group(0)
+                        print('move', move)
 
-            board.push_san(move)
-            # convert move to uci and send
-            client.bots.make_move(game['id'], board.peek().uci())
-        else:
-            print("not our turn")
+                board.push_san(move)
+                # convert move to uci and send
+                client.bots.make_move(game['id'], board.peek().uci())
+            else:
+                print("not our turn")
+        except ResponseError as e:
+            print('Exception in game:', e)
+            print("Trying again...")
+            time.sleep(1)
 
     print('Finished game', game['id'])
     del RUNNING_GAMES[game['id']]
@@ -103,27 +109,32 @@ def play_game(client, init_event):
 
 def look_for_games(client: berserk.Client):
     while True:
-        if len(RUNNING_GAMES) < 4:
-            our_rating = client.users.get_public_data(USERNAME)['perfs']['bullet']['rating']
-            print(f'Looking for a game around {our_rating}...')
-            bots = list(client.bots.get_online_bots(limit=100))
-            random.shuffle(bots)
-            for bot in bots:
-                their_rating = bot['perfs']['bullet']['rating']
-                if abs(their_rating - our_rating) < 100:
-                    print('Challenging bot', bot['username'], 'with rating', their_rating, '...')
-                    client.challenges.create(
-                        username=bot['username'],
-                        rated=True,
-                        clock_limit=60,
-                        clock_increment=0,
-                        color=random.choice(['white', 'black']),
-                    )
-                    time.sleep(3)
-                    if len(RUNNING_GAMES) >= 4:
-                        break
-                    else:
-                        print(f"Only {len(RUNNING_GAMES)} games started, continuing to look for more...")
+        try:
+            if len(RUNNING_GAMES) < 4:
+                our_rating = client.users.get_public_data(USERNAME)['perfs']['bullet']['rating']
+                print(f'Looking for a game around {our_rating}...')
+                bots = list(client.bots.get_online_bots(limit=100))
+                random.shuffle(bots)
+                for bot in bots:
+                    their_rating = bot['perfs']['bullet']['rating']
+                    if abs(their_rating - our_rating) < 100:
+                        print('Challenging bot', bot['username'], 'with rating', their_rating, '...')
+                        client.challenges.create(
+                            username=bot['username'],
+                            rated=True,
+                            clock_limit=60,
+                            clock_increment=0,
+                            color=random.choice(['white', 'black']),
+                        )
+                        time.sleep(3)
+                        if len(RUNNING_GAMES) >= 4:
+                            break
+                        else:
+                            print(f"Only {len(RUNNING_GAMES)} games started, continuing to look for more...")
+        except ResponseError as e:
+            print('Exception in look_for_games:', e) # probably ratelimit
+            time.sleep(30)
+            print("Trying again...")
 
 
         time.sleep(5)
@@ -135,8 +146,8 @@ def main():
     client = berserk.Client(session=session)
 
     # Start games if possible
-    t = Thread(target=look_for_games, args=[client], daemon=True)
-    t.start()
+    # t = Thread(target=look_for_games, args=[client], daemon=True)
+    # t.start()
 
     # Stream ongoing games
     print("Started. Waiting for events...")
@@ -146,7 +157,7 @@ def main():
         if event['type'] == 'challenge':
             try:
                 client.bots.accept_challenge(event['challenge']['id'])
-            except berserk.exceptions.ResponseError:
+            except ResponseError:
                 print(f'Challenge {event["challenge"]["id"]} already accepted')
         elif event['type'] == 'gameStart':
             t = Thread(target=play_game, args=[client, event], daemon=True)
