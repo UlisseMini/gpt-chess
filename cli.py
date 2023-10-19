@@ -8,6 +8,7 @@ from threading import Thread
 from dotenv import load_dotenv; load_dotenv()
 from berserk.exceptions import ResponseError
 import os
+import replicate
 
 
 LICHESS_TOKEN = os.environ['LICHESS_TOKEN']
@@ -35,6 +36,29 @@ def legal_move(board, move):
         return True
     except ValueError:
         return False
+
+
+def replicate_completion(prompt: str):
+    output = replicate.run(
+        "meta/llama-2-70b:a52e56fee2269a78c9279800ec88898cecb6c8f1df22a6483132bea266648f00",
+        input={"prompt": prompt, "max_tokens": 6},
+    )
+    result = ""
+    for item in output:
+        result += str(item)
+
+    return result
+
+
+def openai_completion(prompt: str):
+    completion = openai.Completion.create(
+        engine="gpt-3.5-turbo-instruct",
+        prompt=prompt,
+        temperature=0.5,
+        max_tokens=6,
+    )
+    text = completion['choices'][0]['text'].strip() # type:ignore
+    return text
 
 
 def play_game(client, init_event):
@@ -76,13 +100,7 @@ def play_game(client, init_event):
                 print('PROMPT:\n' + prompt)
                 move = ""
                 while not legal_move(board, move):
-                    completion = openai.Completion.create(
-                        engine="gpt-3.5-turbo-instruct",
-                        prompt=prompt,
-                        temperature=0.5,
-                        max_tokens=6,
-                    )
-                    text = completion['choices'][0]['text'].strip() # type:ignore
+                    text = openai_completion(prompt)
                     print('text', text)
 
                     # match uci move with regex
