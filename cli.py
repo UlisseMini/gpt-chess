@@ -66,6 +66,7 @@ def play_game(client, init_event):
     our_color = chess.WHITE if game['color'] == 'white' else chess.BLACK
     prompt_header = PROMPT_HEADER.format(result='1-0' if our_color==chess.WHITE else '0-1')
 
+    exceptions = 0
     for event in client.bots.stream_game_state(game['id']):
         try:
             if event['type'] == 'chatLine':
@@ -117,7 +118,11 @@ def play_game(client, init_event):
             else:
                 print("not our turn")
         except ResponseError as e:
+            exceptions += 1
             print('Exception in game:', e)
+            if exceptions > 5:
+                print('Too many exceptions, stopping game', game['id'])
+                break
             print("Trying again...")
             time.sleep(1)
 
